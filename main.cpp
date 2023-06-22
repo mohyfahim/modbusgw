@@ -40,10 +40,7 @@ std::string mbgw_get_string_or_default(Json::Value j, std::string key,
 
 int mbgw_get_int_or_default(Json::Value j, std::string key, int def) {
   Json::Int val = j[key].asInt();
-  if (val != NULL)
-    return val;
-  else
-    return def;
+  return val;
 }
 
 char mbgw_get_char_or_default(Json::Value j, std::string key, char def) {

@@ -1,2 +1,10 @@
 build
 .vscode
+.configured*
+.prepared
+.quilt_checked
+.source_dir
+.pkgdir
+ipkg*
+.built*
+openwrt*
