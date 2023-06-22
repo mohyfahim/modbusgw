@@ -1,0 +1,20 @@
+{
+  "protocol": "modbus",
+  "data": [
+    {
+      "code": "R012",
+      "name": "Main Switch",
+      "PNU": 3001
+    },
+    {
+      "code": "R102",
+      "name": "Operation mode",
+      "PNU": 3002
+    },
+    {
+      "code": "O002",
+      "name": "Dl1 configuration",
+      "PNU": 3101
+    }
+  ]
+}
