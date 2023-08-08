@@ -4,17 +4,20 @@
     {
       "code": "R012",
       "name": "Main Switch",
-      "PNU": 3001
+      "PNU": 3001,
+      "mode": "rw"
     },
     {
       "code": "R102",
       "name": "Operation mode",
-      "PNU": 3002
+      "PNU": 3002,
+      "mode": "rw"
     },
     {
       "code": "O002",
       "name": "Dl1 configuration",
-      "PNU": 3101
+      "PNU": 3101,
+      "mode": "rw"
     }
   ]
 }

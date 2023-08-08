@@ -4,8 +4,8 @@
 #include <json/json.h>
 #include <modbus/modbus.h>
 
-#define CONFIG_FILE_PATH "conf.json"
-#define REGISTERS_FILE_PATH "registers.json"
+#define CONFIG_FILE_PATH "/etc/modbusgw/conf.json"
+#define REGISTERS_FILE_PATH "/etc/modbusgw/registers.json"
 
 #define MBGW_LOAD_JSON_FROM_FILE(file_path, root)                              \
   do {                                                                         \
