@@ -8,7 +8,7 @@
 
 ### configuration
 
-There is a `registers.md` file that defines the registers and it's name and read or write features. It's structure is as follows:
+There is a `registers.json` file that defines the registers and it's name and read or write features. It's structure is as follows:
 
 ```json
 {

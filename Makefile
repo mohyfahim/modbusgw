@@ -49,6 +49,7 @@ define Package/modbusgw/install
 		$(INSTALL_DIR) $(1)/usr/bin
 		$(INSTALL_BIN) $(PKG_BUILD_DIR)/openwrt-build/modbusgw $(1)/usr/bin
 		$(INSTALL_DIR) $(1)/etc/modbusgw
+		# $(INSTALL_DIR) $(1)/var
 		$(INSTALL_CONF) $(PKG_BUILD_DIR)/conf.json $(1)/etc/modbusgw
 		$(INSTALL_CONF) $(PKG_BUILD_DIR)/registers.json $(1)/etc/modbusgw
 endef
