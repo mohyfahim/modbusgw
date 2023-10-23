@@ -17,13 +17,13 @@ USE_SOURCE_DIR:=/home/mohy/work/openwrt/fahim/network/utils/modbusgw
 PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)
 
 include $(INCLUDE_DIR)/package.mk
-include $(INCLUDE_DIR)/meson.mk
+# include $(INCLUDE_DIR)/meson.mk
 
 define Package/modbusgw
   SECTION:=net
   CATEGORY:=Network
   TITLE:=Modbusgw
-  DEPENDS:=+jsoncpp +libmodbus
+  DEPENDS:=+jsoncpp +libuci +libmodbus 
 endef
 
 define Package/modbusgw/description
@@ -32,22 +32,24 @@ define Package/modbusgw/description
   as client or server (in TCP or RTU)
 endef
 
-define Build/Configure
-		# mkdir -p $(PKG_BUILD_DIR)
-		# cp $(USE_SOURCE_DIR)/* $(PKG_BUILD_DIR)
-		$(call Build/Configure/Meson)
-endef
+# define Build/Configure
+# 		# mkdir -p $(PKG_BUILD_DIR)
+# 		# cp $(USE_SOURCE_DIR)/* $(PKG_BUILD_DIR)
+# 		$(call Build/Configure/Meson)
+# endef
 
 # Package build instructions; invoke the target-specific compiler to first compile the source file, and then to link the file into the final executable
-# define Build/Compile
-# 		$(TARGET_CC) $(TARGET_CFLAGS) -o $(PKG_BUILD_DIR)/modbusgw.o -c $(PKG_BUILD_DIR)/modbusgw.c
-# 		$(TARGET_CC) $(TARGET_LDFLAGS) -o $(PKG_BUILD_DIR)/$1 $(PKG_BUILD_DIR)/modbusgw.o
-# endef
+define Build/Compile
+		$(TARGET_CXX) $(TARGET_CXXLAGS) -o $(PKG_BUILD_DIR)/mgd  $(PKG_BUILD_DIR)/server.cpp $(TARGET_CXXFLAGS) -luci  -ljsoncpp -lmodbus
+		$(TARGET_CXX) $(TARGET_CXXLAGS) -o $(PKG_BUILD_DIR)/mgdc  $(PKG_BUILD_DIR)/client.cpp $(TARGET_CXXFLAGS) -luci  -ljsoncpp -lmodbus
+endef
+	#	# $(TARGET_CXX) $(TARGET_LDFLAGS) -o $(PKG_BUILD_DIR)/$1 $(PKG_BUILD_DIR)/modbusgw.o
 
 # Package install instructions; create a directory inside the package to hold our executable, and then copy the executable we built previously into the folder
 define Package/modbusgw/install
 		$(INSTALL_DIR) $(1)/usr/bin
-		$(INSTALL_BIN) $(PKG_BUILD_DIR)/openwrt-build/modbusgw $(1)/usr/bin
+		$(INSTALL_BIN) $(PKG_BUILD_DIR)/mgd $(1)/usr/bin
+		$(INSTALL_BIN) $(PKG_BUILD_DIR)/openwrt-build/mgdc $(1)/usr/bin
 		$(INSTALL_DIR) $(1)/etc/modbusgw
 		# $(INSTALL_DIR) $(1)/var
 		$(INSTALL_CONF) $(PKG_BUILD_DIR)/conf.json $(1)/etc/modbusgw

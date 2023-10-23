@@ -1,0 +1,6 @@
+config modbusgw 'set'
+        option pnu1001 '1'
+        option pnu1002 '0'
+
+
+    
