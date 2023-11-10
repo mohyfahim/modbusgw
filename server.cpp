@@ -1,5 +1,7 @@
+#include "loguru.hpp"
 #include <condition_variable>
 #include <csignal>
+#include <cstring>
 #include <errno.h>
 #include <fstream>
 #include <iostream>
@@ -7,18 +9,16 @@
 #include <modbus/modbus.h>
 #include <mutex>
 #include <pthread.h>
-#include <uci.h>
-
-#include <cstring>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/un.h>
+#include <uci.h>
 #include <unistd.h>
 
 #include "type.h"
-
+int test_counter = 0;
 #define CONFIG_FILE_PATH "/etc/modbusgw/conf.json"
 #define REGISTERS_FILE_PATH "/etc/modbusgw/registers.json"
 #define MBGW_DB_ROOT "/var/modbusgw/"
@@ -49,6 +49,19 @@ modbus_t *mb;
 
 pthread_t server_thread;
 int server_sock = -1;
+
+std::vector<std::string> split(const std::string &s, char delim) {
+  std::vector<std::string> result;
+  std::stringstream ss(s);
+  std::string item;
+
+  while (getline(ss, item, delim)) {
+    result.push_back(item);
+  }
+
+  return result;
+}
+
 class Semaphore {
   std::mutex mutex_;
   std::condition_variable condition_;
@@ -95,52 +108,18 @@ std::string mbgw_get_string_or_default(Json::Value j, std::string key,
 void signal_handler(int sig_code) {
 
   std::cout << "signal recevied " << sig_code << std::endl;
+  if (sig_code == SIGTERM || sig_code == SIGINT) {
+    lock.acquire(); // wait to finish the last job
+  }
   if (server_sock != -1) {
     close(server_sock);
     pthread_cancel(server_thread);
   }
+  if (mb != NULL) {
+    modbus_close(mb);
+    modbus_free(mb);
+  }
   exit(-1);
-}
-void *request_to_read_task(void *params) {
-  std::fstream f;
-  f.open(MBGW_DB_REQUEST, std::ios::out | std::ios::in | std::ios::trunc);
-  if (!f.is_open()) {
-    // TODO: log error
-  }
-  uint16_t buffer[32];
-  while (request_to_read_flag) {
-    std::cout << "request to read check" << std::endl;
-    std::string line;
-    while (std::getline(f, line)) {
-      std::stringstream s(line);
-      std::string pnu, wv;
-      s >> pnu >> wv;
-
-      lock.acquire();
-      if (wv.length() > 0) {
-        std::cout << "write command " << wv << std::endl;
-        uint16_t value = stoi(wv);
-        modbus_write_registers(mb, stoi(pnu) - 1, 1, &value);
-      } else if (pnu.length() > 0) {
-        std::cout << "read command " << std::endl;
-        int rc = modbus_read_input_registers(mb, stoi(pnu) - 1, 1, buffer);
-        if (rc == -1) {
-          fprintf(stderr, "error %s\n", modbus_strerror(errno));
-        }
-        for (int i = 0; i < rc; i++) {
-          printf("pnu[%s] reg[%d]=%d (0x%X)\n", pnu.c_str(), i, buffer[i],
-                 buffer[i]);
-        }
-      } else {
-        std::cout << "empty line?: " << line << std::endl;
-      }
-      lock.release();
-    }
-
-    sleep(2);
-  }
-
-  return NULL;
 }
 
 int mbgw_get_int_or_default(Json::Value j, std::string key, int def) {
@@ -157,32 +136,26 @@ char mbgw_get_char_or_default(Json::Value j, std::string key, char def) {
   }
 }
 
-void *mbgw_sock_server_task(void *params) {
-  struct sockaddr_un peer_sock;
-  char buff[256] = {};
-  int *server_sock = (int *)params;
-  socklen_t len = sizeof(peer_sock);
-  int bytes_rec = 0;
+typedef struct {
+  int pnu;
+  uint16_t value;
+  bool error;
+} mbgw_mb_data_t;
 
-  while (request_to_read_flag) {
-    memset(buff, 0, 256);
-    bytes_rec = recvfrom(*server_sock, (void *)buff, sizeof(buff), 0,
-                         (struct sockaddr *)&peer_sock, &len);
-    if (bytes_rec == -1) {
-      std::cout << "RECVFROM ERROR = " << std::strerror(errno) << std::endl;
-      close(*server_sock);
-      exit(1);
-    } else {
-      std::cout << buff << std::endl;
-      // TODO: write to modbus
-    }
+mbgw_mb_data_t extract_data_from_option(std::string line) {
+  mbgw_mb_data_t output = {};
+  std::vector<std::string> tokens = split(line, '_');
+  std::cout << "tokens: " << tokens.size() << std::endl;
+  if (tokens.size() == 3) {
+    output.pnu = std::stoi(tokens[2]);
+  } else {
+    output.error = true;
   }
-
-  close(*server_sock);
-
-  return NULL;
+  return output;
 }
-int updating_config_file() {
+
+int update_device_from_config_file() {
+  std::cout << "start" << test_counter << std::endl;
   struct uci_context *ctx = uci_alloc_context();
   struct uci_package *pkg;
 
@@ -196,32 +169,143 @@ int updating_config_file() {
     uci_free_context(ctx);
     return 1;
   }
+
   struct uci_element *e;
+  struct uci_ptr ptr;
   uci_foreach_element(&pkg->sections, e) {
     struct uci_section *s = uci_to_section(e);
-    printf("Section: %s\n", s->e.name);
+    if (s->e.name == NULL)
+      break;
+    printf("Section2: %s\n", s->e.name);
+    printf("Section after\n");
 
     struct uci_element *opt_e;
     uci_foreach_element(&s->options, opt_e) {
       struct uci_option *o = uci_to_option(opt_e);
+      if (o == NULL || o->e.name == NULL)
+        break;
       printf("Option: %s=%s\n", o->e.name, o->v.string);
+      mbgw_mb_data_t parcel = extract_data_from_option(o->e.name);
+      parcel.value = (uint16_t)atoi(o->v.string);
+      if (parcel.pnu == 4011) {
+        continue; // skip read only parameters
+      }
+      int rc = modbus_write_register(mb, parcel.pnu - 1, parcel.value);
+      if (rc == -1) {
+        std::cerr << "error " << modbus_strerror(errno) << " to write "
+                  << parcel.value << " in " << parcel.pnu << std::endl;
+        return -1;
+      }
     }
   }
+  test_counter++;
+
+  std::cout << "end" << test_counter << std::endl;
   uci_unload(ctx, pkg);
   uci_free_context(ctx);
+  return 0;
 }
-int main(void) {
+
+int updating_config_file() {
+  std::cout << "start" << test_counter << std::endl;
+  struct uci_context *ctx = uci_alloc_context();
+  struct uci_package *pkg;
+
+  if (!ctx) {
+    fprintf(stderr, "Failed to initialize UCI context\n");
+    return 1;
+  }
+
+  if (uci_load(ctx, "/etc/config/modbus", &pkg) != UCI_OK) {
+    fprintf(stderr, "Failed to load config file\n");
+    uci_free_context(ctx);
+    return 1;
+  }
+
+  struct uci_element *e;
+  struct uci_ptr ptr;
+  uci_foreach_element(&pkg->sections, e) {
+    struct uci_section *s = uci_to_section(e);
+    if (s->e.name == NULL)
+      break;
+    printf("Section2: %s\n", s->e.name);
+    printf("Section after\n");
+
+    struct uci_element *opt_e;
+    uci_foreach_element(&s->options, opt_e) {
+      struct uci_option *o = uci_to_option(opt_e);
+      if (o == NULL || o->e.name == NULL)
+        break;
+      printf("Option: %s=%s\n", o->e.name, o->v.string);
+      char option_string[128] = {};
+      snprintf(option_string, sizeof option_string, "modbus.%s.%s", s->e.name,
+               o->e.name);
+      std::cout << "val:" << uci_validate_text(option_string) << std::endl;
+      mbgw_mb_data_t parcel = extract_data_from_option(o->e.name);
+      int rc = modbus_read_registers(mb, parcel.pnu - 1, 1, &(parcel.value));
+      if (rc == -1) {
+        std::cerr << "error " << modbus_strerror(errno) << std::endl;
+        return -1;
+      }
+      uci_parse_ptr(ctx, &ptr, option_string);
+      ptr.value = std::to_string(parcel.value).c_str();
+      uci_set(ctx, &ptr);
+    }
+  }
+  uci_commit(ctx, &pkg, true);
+  test_counter++;
+
+  std::cout << "end" << test_counter << std::endl;
+  uci_unload(ctx, pkg);
+  uci_free_context(ctx);
+  return 0;
+}
+
+void *mbgw_sock_server_task(void *params) {
+  struct sockaddr_un peer_sock;
+  char buff[256] = {};
+  int *server_sock = (int *)params;
+  socklen_t len = sizeof(peer_sock);
+  int bytes_rec = 0;
+
+  while (request_to_read_flag) {
+    memset(buff, 0, 256);
+    bytes_rec = recvfrom(*server_sock, (void *)buff, sizeof(buff), 0,
+                         (struct sockaddr *)&peer_sock, &len);
+    if (bytes_rec == -1) {
+      LOG_F(ERROR, "RECVFROM ERROR = %s", std::strerror(errno));
+      close(*server_sock);
+      exit(1);
+    } else {
+      LOG_F(INFO, "recv = %s", buff);
+      if (!strcmp(buff, "hello")) {
+        lock.acquire();
+        update_device_from_config_file();
+        lock.release();
+      }
+    }
+  }
+
+  close(*server_sock);
+
+  return NULL;
+}
+
+int main(int argc, char *argv[]) {
   mbgw_serial_options_t serial_options;
   Json::Value root;
-  int sleep_timer = 0;
-
+  int sleep_timer = 50;
+  loguru::init(argc, argv);
+  loguru::add_file("/var/log/modbus.log", loguru::Append,
+                   loguru::Verbosity_MAX);
+  LOG_F(INFO, "server is started");
   int len, rc;
   struct sockaddr_un server_sockaddr;
   memset(&server_sockaddr, 0, sizeof(struct sockaddr_un));
 
   server_sock = socket(AF_UNIX, SOCK_DGRAM, 0);
   if (server_sock == -1) {
-    std::cout << "SOCKET ERROR: " << std::strerror(errno) << std::endl;
+    LOG_F(ERROR, "SOCKET ERROR: %s\r\n", std::strerror(errno));
     exit(1);
   }
   server_sockaddr.sun_family = AF_UNIX;
@@ -230,12 +314,12 @@ int main(void) {
   unlink(SOCK_PATH);
   rc = bind(server_sock, (struct sockaddr *)&server_sockaddr, len);
   if (rc == -1) {
-    std::cout << "BIND ERROR: " << std::strerror(errno) << std::endl;
+    LOG_F(ERROR, "BIND ERROR: %s\r\n", std::strerror(errno));
     close(server_sock);
     exit(1);
   }
 
-  std::cout << "socket listening..." << std::endl;
+  LOG_F(INFO, "socket is listening");
 
   pthread_create(&server_thread, NULL, mbgw_sock_server_task, &server_sock);
 
@@ -271,42 +355,25 @@ int main(void) {
   std::cout << serial_options.stop_bit << std::endl;
   std::cout << "read period: " << sleep_timer << std::endl;
 
-  // MBGW_LOAD_JSON_FROM_FILE(REGISTERS_FILE_PATH, root);
-  // Json::Value registers = root["data"];
+  mb = modbus_new_rtu(serial_options.port.c_str(), serial_options.baud,
+                      serial_options.parity, serial_options.data_bit,
+                      serial_options.stop_bit);
+  if (modbus_connect(mb) == -1) {
+    fprintf(stderr, "Connection failed: %s\n", modbus_strerror(errno));
+    modbus_free(mb);
+    return -1;
+  }
+  modbus_set_slave(mb, 1);
+  modbus_rtu_set_serial_mode(mb, MODBUS_RTU_RS485);
+  lock.release();
 
-  // uint16_t tab_reg[64];
-
-  // mb = modbus_new_rtu(serial_options.port.c_str(), serial_options.baud,
-  //                     serial_options.parity, serial_options.data_bit,
-  //                     serial_options.stop_bit);
-  // if (modbus_connect(mb) == -1) {
-  //   fprintf(stderr, "Connection failed: %s\n", modbus_strerror(errno));
-  //   modbus_free(mb);
-  //   return -1;
-  // }
-  // modbus_set_slave(mb, 1);
-  // modbus_rtu_set_serial_mode(mb, MODBUS_RTU_RS485);
-  // pthread_create(&request_to_read, NULL, request_to_read_task, NULL);
-  // lock.release();
-  // while (true) {
-  //   std::cout << "perodically read" << std::endl;
-  //   for (int i = 0; i < registers.size(); i++) {
-  //     Json::Value reg = registers[i];
-  //     int pnu = reg["PNU"].asInt();
-  //     lock.acquire();
-  //     int rc = modbus_read_registers(mb, pnu - 1, 1, tab_reg);
-  //     lock.release();
-  //     if (rc == -1) {
-  //       fprintf(stderr, "error %s\n", modbus_strerror(errno));
-  //       return -1;
-  //     }
-  //     for (int i = 0; i < rc; i++) {
-  //       printf("pnu[%d] reg[%d]=%d (0x%X)\n", pnu, i, tab_reg[i],
-  //       tab_reg[i]);
-  //     }
-  //   }
-  //   sleep(sleep_timer);
-  // }
+  while (true) {
+    LOG_F(INFO, "update periodically");
+    lock.acquire();
+    updating_config_file();
+    lock.release();
+    sleep(sleep_timer);
+  }
 
   modbus_close(mb);
   modbus_free(mb);
